@@ -276,8 +276,7 @@ export default function ChatTerminal() {
       )}
 
       <form onSubmit={handleSendMessage} className="flex mt-auto">
-        <span className="text-red-500 pr-2">></span>
-        <input
+                  <span className="text-red-500 pr-2">{`>>`}</span>        <input
           type="text"
           value={input}
           onChange={(e) => setInput(e.target.value)}
