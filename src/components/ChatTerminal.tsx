@@ -6,7 +6,7 @@ import FileExplorer from './FileExplorer'; // Import the FileExplorer component
 interface FileEntry {
   name: string;
   type: 'file' | 'directory';
-  content?: string;
+  content?: string; // For IDE integration later
 }
 
 export default function ChatTerminal() {
@@ -15,6 +15,18 @@ export default function ChatTerminal() {
   const [isLoading, setIsLoading] = useState(false);
   const [showFileExplorer, setShowFileExplorer] = useState(false);
   const [editingFileContent, setEditingFileContent] = useState<FileEntry | null>(null);
+  const [editedFileContent, setEditedFileContent] = useState<string>('');
+
+  // Initial dummy file system
+  const [files, setFiles] = useState<FileEntry[]>([
+    { name: 'ata_tool_1.js', type: 'file', content: '// This is ATA Tool 1\nconsole.log("Hello from ATA Tool 1");' },
+    { name: 'code_upgrade_a.ts', type: 'file', content: 'type UpgradeA = { version: string; };\nconst upgrade: UpgradeA = { version: "1.0.0" };' },
+    { name: 'config', type: 'directory' },
+    { name: 'config/settings.json', type: 'file', content: '{\n  "theme": "dark",\n  "fontSize": 14\n}' },
+    { name: 'my_script.py', type: 'file', content: '# Python script\nprint("Hello, Python!")' },
+    { name: 'docs', type: 'directory' },
+    { name: 'docs/README.md', type: 'file', content: '# Readme\nThis is a dummy readme file.' },
+  ]);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -32,6 +44,7 @@ export default function ChatTerminal() {
       // Handle internal commands
       if (userMessage === '/ls' || userMessage === '/explorer') {
         setShowFileExplorer(true);
+        setEditingFileContent(null); // Ensure no file is being edited
         setMessages((prevMessages) => [...prevMessages, `> ${userMessage}`, 'System: Opening File Explorer.']);
         setInput('');
         return;
@@ -74,16 +87,32 @@ export default function ChatTerminal() {
 
   const handleOpenFile = (file: FileEntry) => {
     setEditingFileContent(file);
+    setEditedFileContent(file.content || ''); // Initialize edited content with file's current content
     setShowFileExplorer(false); // Hide explorer when a file is opened
   };
 
   const handleCloseFile = () => {
     setEditingFileContent(null);
+    setEditedFileContent('');
     setShowFileExplorer(true); // Show explorer again after closing file
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Escape' && (showFileExplorer || editingFileContent)) {
+  const handleSaveFile = () => {
+    if (editingFileContent) {
+      setFiles((prevFiles) =>
+        prevFiles.map((file) =>
+          file.name === editingFileContent.name
+            ? { ...file, content: editedFileContent }
+            : file
+        )
+      );
+      setMessages((prevMessages) => [...prevMessages, `System: File '${editingFileContent.name}' saved.`]);
+      handleCloseFile(); // Close editor after saving
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    if (e.key === 'Escape') {
       e.preventDefault();
       if (editingFileContent) {
         handleCloseFile();
@@ -104,21 +133,32 @@ export default function ChatTerminal() {
         <div className="flex-grow flex flex-col">
           <div className="flex justify-between items-center mb-2 pb-2 border-b border-red-700">
             <h2 className="text-lg font-bold">Editing: {editingFileContent.name}</h2>
-            <button
-              onClick={handleCloseFile}
-              className="px-3 py-1 bg-red-800 text-white rounded hover:bg-red-700 transition-colors duration-200"
-            >
-              Close File
-            </button>
+            <div className="flex space-x-2">
+              <button
+                onClick={handleSaveFile}
+                className="px-3 py-1 bg-red-800 text-white rounded hover:bg-red-700 transition-colors duration-200"
+              >
+                Save File
+              </button>
+              <button
+                onClick={handleCloseFile}
+                className="px-3 py-1 bg-gray-600 text-white rounded hover:bg-gray-500 transition-colors duration-200"
+              >
+                Close File
+              </button>
+            </div>
           </div>
           <textarea
             className="flex-grow w-full bg-transparent border border-red-900 p-2 outline-none resize-none custom-scrollbar"
-            value={editingFileContent.content}
-            readOnly // For now, it's read-only. Will be a full IDE later.
+            value={editedFileContent}
+            onChange={(e) => setEditedFileContent(e.target.value)}
+            onKeyDown={handleKeyDown}
+            autoFocus
+            spellCheck="false"
           />
         </div>
       ) : showFileExplorer ? (
-        <FileExplorer onOpenFile={handleOpenFile} />
+        <FileExplorer files={files} onOpenFile={handleOpenFile} />
       ) : (
         <div className="flex-grow overflow-y-auto mb-4 custom-scrollbar" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
           {messages.map((msg, index) => (
