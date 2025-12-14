@@ -8,7 +8,7 @@ interface MojoWasmExports extends WebAssembly.Exports {
   // Add other exported functions as needed
 }
 
-let mojoModule: WebAssembly.WebAssemblyInstance | null = null;
+let mojoModule: WebAssembly.Instance | null = null;
 let mojoExports: MojoWasmExports | null = null;
 let memory: WebAssembly.Memory | null = null;
 
