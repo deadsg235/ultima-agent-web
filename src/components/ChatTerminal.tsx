@@ -2,6 +2,8 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import FileExplorer from './FileExplorer'; // Import the FileExplorer component
+import { WalletMultiButton } from '@solana/wallet-adapter-react-ui'; // Import the WalletMultiButton
+import { loadMojoModule, predictWithMojo, greetWithMojo } from '../lib/mojoWasm'; // Import Mojo WASM utilities
 
 interface FileEntry {
   name: string;
@@ -16,6 +18,9 @@ export default function ChatTerminal() {
   const [showFileExplorer, setShowFileExplorer] = useState(false);
   const [editingFileContent, setEditingFileContent] = useState<FileEntry | null>(null);
   const [editedFileContent, setEditedFileContent] = useState<string>('');
+  const [mojoLoaded, setMojoLoaded] = useState(false);
+  const [currentSystemPrompt, setCurrentSystemPrompt] = useState<string>('');
+
 
   // Initial dummy file system
   const [files, setFiles] = useState<FileEntry[]>([
@@ -34,33 +39,128 @@ export default function ChatTerminal() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
-  useEffect(scrollToBottom, [messages]);
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
+
+  // Load Mojo WASM module once
+  useEffect(() => {
+    const loadWasm = async () => {
+      const module = await loadMojoModule();
+      if (module) {
+        setMojoLoaded(true);
+        setMessages((prevMessages) => [...prevMessages, 'System: Mojo WASM module loaded.']);
+      } else {
+        setMessages((prevMessages) => [...prevMessages, 'System: Failed to load Mojo WASM module.']);
+      }
+    };
+    loadWasm();
+
+    // Fetch initial system prompt
+    const fetchSystemPrompt = async () => {
+      try {
+        const response = await fetch('/api/update-prompt'); // GET request to fetch current prompt
+        if (response.ok) {
+          const data = await response.json();
+          setCurrentSystemPrompt(data.prompt);
+          setMessages((prevMessages) => [...prevMessages, `System Prompt: ${data.prompt}`]);
+        } else {
+          setMessages((prevMessages) => [...prevMessages, 'System: Failed to fetch initial system prompt.']);
+        }
+      } catch (error) {
+        console.error('Error fetching initial system prompt:', error);
+        setMessages((prevMessages) => [...prevMessages, 'System: Error fetching initial system prompt.']);
+      }
+    };
+    fetchSystemPrompt();
+
+  }, []); // Empty dependency array means this runs once on mount
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if (input.trim() && !isLoading) {
       const userMessage = input.trim();
+      setMessages((prevMessages) => [...prevMessages, `> ${userMessage}`]);
+      setInput('');
+      setIsLoading(true);
 
       // Handle internal commands
       if (userMessage === '/ls' || userMessage === '/explorer') {
         setShowFileExplorer(true);
         setEditingFileContent(null); // Ensure no file is being edited
-        setMessages((prevMessages) => [...prevMessages, `> ${userMessage}`, 'System: Opening File Explorer.']);
-        setInput('');
+        setMessages((prevMessages) => [...prevMessages, 'System: Opening File Explorer.']);
+        setIsLoading(false);
         return;
       }
       if (userMessage === '/chat') {
         setShowFileExplorer(false);
         setEditingFileContent(null);
-        setMessages((prevMessages) => [...prevMessages, `> ${userMessage}`, 'System: Switching to Chat Mode.']);
-        setInput('');
+        setMessages((prevMessages) => [...prevMessages, 'System: Switching to Chat Mode.']);
+        setIsLoading(false);
+        return;
+      }
+      if (userMessage.startsWith('/predict ')) {
+        if (!mojoLoaded) {
+          setMessages((prevMessages) => [...prevMessages, 'System: Mojo WASM module not loaded. Cannot predict.']);
+          setIsLoading(false);
+          return;
+        }
+        const valueStr = userMessage.split(' ')[1];
+        const value = parseFloat(valueStr);
+        if (!isNaN(value)) {
+          const prediction = await predictWithMojo(value);
+          setMessages((prevMessages) => [...prevMessages, `Mojo Prediction: ${prediction}`]);
+        } else {
+          setMessages((prevMessages) => [...prevMessages, 'System: Invalid number for prediction. Usage: /predict <number>']);
+        }
+        setIsLoading(false);
+        return;
+      }
+      if (userMessage.startsWith('/mojo ')) {
+        if (!mojoLoaded) {
+          setMessages((prevMessages) => [...prevMessages, 'System: Mojo WASM module not loaded. Cannot greet.']);
+          setIsLoading(false);
+          return;
+        }
+        const name = userMessage.substring(userMessage.indexOf(' ') + 1);
+        const greeting = await greetWithMojo(name);
+        setMessages((prevMessages) => [...prevMessages, `Mojo Greet: ${greeting}`]);
+        setIsLoading(false);
+        return;
+      }
+      if (userMessage.startsWith('/update_prompt ')) {
+        const newPrompt = userMessage.substring('/update_prompt '.length).trim();
+        if (newPrompt) {
+          try {
+            const response = await fetch('/api/update-prompt', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({ newPromptContent: newPrompt }),
+            });
+            const data = await response.json();
+            if (response.ok) {
+              setMessages((prevMessages) => [...prevMessages, `System: ${data.message}`]);
+              setMessages((prevMessages) => [...prevMessages, `Proposed: ${data.proposedContent}`]);
+              setMessages((prevMessages) => [...prevMessages, `Current (before PR merge): ${data.currentLivePrompt}`]);
+              setCurrentSystemPrompt(newPrompt); // Optimistically update if PR is "created"
+            } else {
+              setMessages((prevMessages) => [...prevMessages, `System Error: ${data.error}`]);
+            }
+          } catch (error) {
+            console.error('Error updating system prompt:', error);
+            setMessages((prevMessages) => [...prevMessages, 'System Error: Failed to communicate with update prompt API.']);
+          }
+        } else {
+          setMessages((prevMessages) => [...prevMessages, 'System: Usage: /update_prompt <new prompt content>']);
+        }
+        setIsLoading(false);
         return;
       }
 
-      setMessages((prevMessages) => [...prevMessages, `> ${userMessage}`]);
-      setInput('');
-      setIsLoading(true);
 
+      // Default AI message handling
       try {
         const response = await fetch('/api/chat', {
           method: 'POST',
@@ -128,6 +228,10 @@ export default function ChatTerminal() {
     <div className="flex flex-col h-screen bg-black text-red-500 font-mono p-4 terminal-scanlines">
       {/* Scanline overlay */}
       <div className="scanline-overlay"></div>
+
+      <div className="absolute top-4 right-4 z-10">
+        <WalletMultiButton />
+      </div>
 
       {editingFileContent ? (
         <div className="flex-grow flex flex-col">
